@@ -4,7 +4,8 @@
 # CCR Collaborative Bioinformatics Resrouce at Frederick National Laboratory
 # Leidos Biomedical Research, Inc
 
-trainMSI <- function(germline, somatic, msi, markers = NULL, train.prop = 0.5, validate.prop = 0.2, seed = 2308947)
+trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000, train.prop = 0.5,
+                     validate.prop = 0.2, seed = 2308947, verbose = FALSE)
 {
     ######### Checks #########
     # ... should add some checks here to be sure variables make sense ... assuming they do for now
@@ -18,12 +19,12 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, train.prop = 0.5, v
     ######### Collect Mixture Distributions #########
     dstn <- list()
 
-    for(i in 1:length(normal))
+    for(i in 1:length(normal[[1]]))
     {
         # gather individual distributions
         tmp <- sapply(normal, `[`, i)
 
-        dstn[[normal[[1]][[i]]$siteInfo]] <- numeric()
+        dstn[[names(normal[[1]])[i]]] <- numeric()
 
         # do this by individual
         for(j in 1:length(tmp))
@@ -73,7 +74,7 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, train.prop = 0.5, v
     scores <- matrix(NA, nrow = length(tumor), ncol = length(dstn),
                  dimnames = list(names(tumor), names(dstn)))
 
-    for(i in names(tumor))
+    for(i in 1:length(tumor))
     {
         for(j in names(dstn))
         {
@@ -86,8 +87,9 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, train.prop = 0.5, v
     }
 
     scores <- as.data.frame(scores)
-    scores$pid <- rownames(scores)
-    scores <- merge(scores, map, by.x = 'pid', by.y = 'tumor')
+    scores$msi <- msi
+
+    # just in case...
     scores <- subset(scores, !is.na(msi))
 
 
@@ -96,10 +98,10 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, train.prop = 0.5, v
     set.seed(seed)
 
     # pick training/testing groups
-    if(training.prop < 1)
+    if(train.prop < 1)
     {
-        training <- c(sample((1:dim(scores)[1])[ msi], size = round(sum( msi)*training.prop))
-                      sample((1:dim(scores)[1])[!msi], size = round(sum(!msi)*training.prop)))
+        training <- c(sample((1:dim(scores)[1])[ scores$msi], size = round(sum( scores$msi)*train.prop)),
+                      sample((1:dim(scores)[1])[!scores$msi], size = round(sum(!scores$msi)*train.prop)))
         testing <- (1:dim(scores)[1])[-training]
     }else{
         training <- 1:dim(scores)[1]
@@ -108,7 +110,6 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, train.prop = 0.5, v
 
     # impute missing scores
     tmp <- missForest(scores[training,names(scores) %in% c(names(dstn), 'msi')])$ximp
-    names(tmp)[-length(names(tmp))] <- paste('s', 1:(dim(tmp)[2] - 1), sep = '')
 
     # get response variable column number
     resp <- which(names(tmp) == 'msi')
@@ -118,43 +119,82 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, train.prop = 0.5, v
 
     # store cross validation results here
     validate <- matrix(nrow = 1000, ncol = ncol(tmp) + 1)
+    colnames(validate) <- c(colnames(tmp), 'score')
+    validationScore <- ncol(tmp) + 1
 
     # run a bunch of models
-    for(i in 1:1000)
+    for(i in 1:nValidations)
     {
         # sample 80% / 20% for training / testing
-        test <- c(sample((1:dim(scores)[1])[scores$msi], 2), sample((1:dim(scores)[1])[!scores$msi], 13))
-        train <- (1:dim(scores)[1])[-test]
+        nmsi <- sum(scores$msi[training])
+        test <- c(sample((1:dim(tmp)[1])[scores$msi[training]], nmsi*validate.prop),
+                  sample((1:dim(tmp)[1])[!scores$msi[training]], (dim(tmp)[1] - nmsi) * validate.prop))
+        train <- (1:dim(tmp)[1])[-test]
 
-        # train
-        model <- logitreg(as.numeric(tmp[train, resp]), as.matrix(tmp[train, -resp]), hessian = FALSE)
+        # model
+        validate[i,-validationScore] <- logitreg(as.numeric(tmp[train, resp]), as.matrix(tmp[train, -resp]))$par
 
-        # test
-        predict <- inv.logit(cbind(1, tmp[test, -resp]) %*% model$par)
+        # validate
+        predict <- inv.logit(cbind(1, tmp[test, -resp]) %*% validate[i,-validationScore])
 
         # calculate likelihood score given correct solution (i.e. the larger this is the worse the prediction)
-        validation.score <- sum(ifelse(tmp[test,resp], log10(predict), log10(1 - predict)))
-
-        # save results
-        validate[i,] <- c(model$par, validation.score)
+        validate[i, validationScore] <- sum(ifelse(tmp[test,resp], log10(predict), log10(1 - predict)))
     }
 
 
     # pick final model
-    model <- apply(validate[is.finite(validate[,11]),], 2, median)
+    model <- list()
+    model$pred <- apply(validate[is.finite(validate[,'score']),-validationScore], 2, median)
+    model$markers <- markers
+
+    # if verbose show full spectrum of models
+    if(verbose)
+        if(require(MASS))
+            parcoord(validate[,-validationScore], lty = ifelse(!is.finite(validate[,validationScore]), 3, 1),
+                     col = ifelse(!is.finite(validate[,validationScore]), 'red', 'black'))
 
 
     ######### Testing #########
     if(length(testing) > 0)
     {
+        tmp <- as.matrix(missForest(scores[testing,names(scores) %in% c(names(dstn), 'msi')])$ximp)
+    }
+
+    # predict (posibly using test data)
+    prediction <- inv.logit(cbind(1, tmp[,-resp]) %*% model$pred)
+
+    # collect model metrics via ROC
+    roc <- matrix(nrow = length(unique(prediction)) + 2, ncol = 3,
+                  dimnames = list(NULL, c('False Positive', 'True Positive', 'Cutoff')))
+
+    roc[,'Cutoff'] <- c(1, unique(prediction[order(-prediction)]), 0)
+
+    for(i in 1:dim(roc)[1])
+    {
+        roc[i,'False Positive'] <- sum(prediction[tmp[,'msi'] == 0] > roc[i,'Cutoff']) / sum(tmp[,'msi'] == 0)
+        roc[i,'True Positive'] <- sum(prediction[tmp[,'msi'] == 1] > roc[i,'Cutoff']) / sum(tmp[,'msi'] == 1)
+    }
+
+    model$roc <- roc
+    model$auc <- sum((roc[-dim(roc)[1],'Cutoff'] -  roc[-1,'Cutoff']) * roc[-1,'True Positive'])
+
+    if(verbose)
+    {
+        plot(roc[,1], roc[,2], type = 'l', xlab = 'False Positive', ylab = 'True Positive', main = 'ROC')
+        abline(0:1, lty = 2)
+
+        plot(prediction, col = ifelse(tmp[,'msi'] == 1, 'red', 'black'), pch = 20, ylab = 'Prediction')
     }
 
     return(model)
 }
 
 # read repeatseq data from file <f>
-read.repeatseq <- function(f, markers)
+read.repeatseq <- function(f, markers = NULL)
 {
+    if(!file.exists(f))
+        stop(paste("File", f, "seems not to exist"))
+
     # read in main lines of info
     tmp <- readLines(f)
     tmp <- gsub('~', '', tmp[which(substr(tmp, 1, 1) == '~')])
@@ -175,7 +215,7 @@ read.repeatseq <- function(f, markers)
                       {
                           # split observations apart
                           x <- strsplit(gsub(']', '', x, fixed = TRUE), '[', fixed = TRUE)
-                          retval <- as.numeric(sapply(x, `[`, 2))
+                          retval <- suppressWarnings(as.numeric(sapply(x, `[`, 2)))
                           names(retval) <- sapply(x, `[`, 1)
                           # order by allele size
                           retval <- retval[order(names(retval))]
@@ -185,30 +225,30 @@ read.repeatseq <- function(f, markers)
 
     ### concordance
     tmp <- strsplit(sapply(tmp, `[`, 2), ' D:')
-    concordance <- as.numeric(sapply(tmp, `[`, 1))
+    concordance <- suppressWarnings(as.numeric(sapply(tmp, `[`, 1)))
 
     ### total reads
     tmp <- strsplit(sapply(tmp, `[`, 2), ' R:')
-    totalReads <- as.numeric(sapply(tmp, `[`, 1))
+    totalReads <- suppressWarnings(as.numeric(sapply(tmp, `[`, 1)))
 
     ### total reads after filtering
     tmp <- strsplit(sapply(tmp, `[`, 2), ' S:')
-    nReads <- as.numeric(sapply(tmp, `[`, 1))
+    nReads <- suppressWarnings(as.numeric(sapply(tmp, `[`, 1)))
 
     ### total reads with no CIGAR sequence present
     tmp <- strsplit(sapply(tmp, `[`, 2), ' M:')
-    noCIGAR <- as.numeric(sapply(tmp, `[`, 1))
+    noCIGAR <- suppressWarnings(as.numeric(sapply(tmp, `[`, 1)))
 
     ### average mapping quality
     tmp <- strsplit(sapply(tmp, `[`, 2), ' GT:')
-    qc <- as.numeric(sapply(tmp, `[`, 1))
+    qc <- suppressWarnings(as.numeric(sapply(tmp, `[`, 1)))
 
     ### genotype
     tmp <- strsplit(sapply(tmp, `[`, 2), ' L:')
     geno <- sapply(tmp, `[`, 1)
 
     ### likelihodd of genotype
-    lik <- as.numeric(sapply(tmp, `[`, 2))
+    lik <- suppressWarnings(as.numeric(sapply(tmp, `[`, 2)))
 
 
     ##### put everything into a list #####
@@ -227,7 +267,20 @@ read.repeatseq <- function(f, markers)
                             lik = lik[j])
     }
 
-    names(retval) <- unlist(sapply(retval, `[`, 'siteInfo'))
+    if(!is.null(markers))
+    {
+        for(j in 1:length(retval))
+        {
+            if(retval[[j]]$siteInfo %in% names(markers))
+            {
+                names(retval)[j] <- markers[retval[[j]]$siteInfo]
+            }else{
+                names(retval)[j] <- retval[[j]]$siteInfo
+            }
+        }
+    }else{
+        names(retval) <- unlist(sapply(retval, `[`, 'siteInfo'))
+    }
 
     return(retval)
 }
