@@ -146,6 +146,7 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
     model <- list()
     model$pred <- apply(validate[is.finite(validate[,'score']),-validationScore], 2, median)
     model$markers <- markers
+    model$normal <- dstn
 
     # if verbose show full spectrum of models
     if(verbose)
