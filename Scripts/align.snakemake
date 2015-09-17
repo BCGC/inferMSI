@@ -1,0 +1,109 @@
+# align.snakemake
+# Randy Johnson
+# This Snakefile will generate bam files given fastq.gz files
+# invoke with snakemake -s align.snakemake
+# CCR Collaborative Bioinformatics Resrouce at Frederick National Laboratory
+# Leidos Biomedical Research, Inc
+
+
+from glob import glob
+
+# set these variables to the appropriate paths
+reference = "~/hg19/human_g1k_v37.fasta"
+goldStandardIndels = "~/hg19/Mills_and_1000G_gold_standard.indels.b37.vcf"
+
+# defaults
+ncores = 8
+
+# run on all fastq file pairs in the current working directory
+# note that they must end with ".R1.fastq.gz" or ".R2.fastq.gz"
+fq1 = glob("*.R1.fastq.gz")
+fq2 = glob("*.R2.fastq.gz")
+
+bams = [a.replace(".R1.fastq.gz", "_realigned.bam")]
+bais = [a.replace(".R1.fastq.gz", "_realigned.bam.bai")]
+
+
+##### Rule All #####
+rule all:
+    input: bais
+
+
+##### Realign around indels #####
+# repeatseq looks for this file ending
+rule link2index:
+    input: "{sample}_realigned.bai"
+    output: "{sample_realigned.bam.bai"
+    shell: "ln -s {input} {output}"
+
+rule realign:
+    input: "{sample}_deduped.bam",
+           "{sample}_deduped.bam.bai"
+    output: list = temp("{sample}.list"),
+            bam = "{sample}_realigned.bam",
+            bai = "{sample}_realigned.bai"
+    shell:
+        """
+        java -jar ~/bin/GenomeAnalysisTK.jar \
+                  -T RealignerTargetCreator \
+                  -R {reference}  \
+                  -I {input} \
+                  -L 20 \
+                  -known {goldStandardIndels}
+                  -o {output[list]}
+
+        java -jar ~/bin/GenomeAnalysisTK.jar \
+                  -T IndelRealigner \
+                  -R {reference} \
+                  -I {input} \
+                  -targetedIntervals {output[list]} \
+                  -known {goldStandardIndels}
+                  -o {output[bam]}
+        """
+
+
+##### Dedup and fix up bams #####
+
+rule dedupBams:
+    input: "{sample}_sorted.bam"
+    output: tmpBam = temp("{sample}_deduped0.bam"),
+            metrics = temp("{sample}_metrics.txt")
+            index = temp("{sample}_deduped.bam.bai"),
+            bam = temp("{sample}_deduped.bam"),
+    shell:
+        """
+        java -jar ~/bin/MarkDuplicates.jar \
+             -XX:ParallelGCThreads=1 \
+             INPUT={input} \
+             OUTPUT={output[tmpBam]} \
+             METRICS_FILE={output[metrics]}
+
+        java -jar ~/bin/AddOrReplaceReadGroups.jar \
+             INPUT={output[tmpBam]} \
+             OUTPUT={output[bam]} \
+             RGLB=lib1 \
+             RGPL=illumina \
+             RGPU=run \
+             RGSM={input}
+
+        samtools index {output[bam]}
+        """
+
+
+##### Align reads and generate bam file #####
+
+rule align:
+    input: R1 = "{sample}.R1.fastq.gz",
+           R2 = "{sample}.R2.fastq.gz"
+    output: sam = temp("{sample}.sam")
+            bam = temp("{sample}.bam"),
+            sorted = temp("{sample}_sorted.bam"),
+    threads: ncores
+    shell:
+        """
+        bwa mem -t {ncores} {reference} {input[R1]} {input[R2]} > {output[sam]}
+
+        samtools view -bS {output[sam]} > {output[bam]}
+
+        samtools sort -@ {ncores} {output[bam]} {output[sorted]}
+        """
