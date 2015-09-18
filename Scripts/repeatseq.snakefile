@@ -1,6 +1,6 @@
 # repeatseq.snakemake
 # Randy Johnson
-# This Snakefile will generate repeatseq files given a bam file
+# This Snakefile will generate repeatseq files given a bam files
 # invoke with snakemake -s repeatseq.snakemake
 # CCR Collaborative Bioinformatics Resrouce at Frederick National Laboratory
 # Leidos Biomedical Research, Inc
