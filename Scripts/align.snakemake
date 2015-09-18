@@ -20,8 +20,8 @@ ncores = 8
 fq1 = glob("*.R1.fastq.gz")
 fq2 = glob("*.R2.fastq.gz")
 
-bams = [a.replace(".R1.fastq.gz", "_realigned.bam")]
-bais = [a.replace(".R1.fastq.gz", "_realigned.bam.bai")]
+bams = [a.replace(".R1.fastq.gz", "_realigned.bam") for a in fq1]
+bais = [a.replace(".R1.fastq.gz", "_realigned.bam.bai") for a in fq1]
 
 
 ##### Rule All #####
@@ -33,13 +33,13 @@ rule all:
 # repeatseq looks for this file ending
 rule link2index:
     input: "{sample}_realigned.bai"
-    output: "{sample_realigned.bam.bai"
+    output: "{sample}_realigned.bam.bai"
     shell: "ln -s {input} {output}"
 
 rule realign:
-    input: "{sample}_deduped.bam",
-           "{sample}_deduped.bam.bai"
-    output: list = temp("{sample}.list"),
+    input: bam = "{sample}_deduped.bam",
+           bai = "{sample}_deduped.bam.bai"
+    output: lst = temp("{sample}.list"),
             bam = "{sample}_realigned.bam",
             bai = "{sample}_realigned.bai"
     shell:
@@ -47,17 +47,17 @@ rule realign:
         java -jar ~/bin/GenomeAnalysisTK.jar \
                   -T RealignerTargetCreator \
                   -R {reference}  \
-                  -I {input} \
+                  -I {input[bam]} \
                   -L 20 \
-                  -known {goldStandardIndels}
-                  -o {output[list]}
+                  -known {goldStandardIndels} \
+                  -o {output[lst]}
 
         java -jar ~/bin/GenomeAnalysisTK.jar \
                   -T IndelRealigner \
                   -R {reference} \
-                  -I {input} \
-                  -targetedIntervals {output[list]} \
-                  -known {goldStandardIndels}
+                  -I {input[bam]} \
+                  -targetIntervals {output[lst]} \
+                  -known {goldStandardIndels} \
                   -o {output[bam]}
         """
 
@@ -67,13 +67,13 @@ rule realign:
 rule dedupBams:
     input: "{sample}_sorted.bam"
     output: tmpBam = temp("{sample}_deduped0.bam"),
-            metrics = temp("{sample}_metrics.txt")
+            metrics = temp("{sample}_metrics.txt"),
             index = temp("{sample}_deduped.bam.bai"),
-            bam = temp("{sample}_deduped.bam"),
+            bam = temp("{sample}_deduped.bam")
     shell:
         """
-        java -jar ~/bin/MarkDuplicates.jar \
-             -XX:ParallelGCThreads=1 \
+        java -XX:ParallelGCThreads=1 \
+             -jar ~/bin/MarkDuplicates.jar \
              INPUT={input} \
              OUTPUT={output[tmpBam]} \
              METRICS_FILE={output[metrics]}
@@ -92,12 +92,18 @@ rule dedupBams:
 
 ##### Align reads and generate bam file #####
 
+# There must be a better way to do this, but samtools takes a file name and
+# appends .bam ... if I pass sortedFull name, it give me <>.bam.bam, but I'm
+# unsure of how to pass sortedShort without Snakemake expeting it in the output
+# -- come back to this and figure out a better solution --
+
 rule align:
     input: R1 = "{sample}.R1.fastq.gz",
            R2 = "{sample}.R2.fastq.gz"
-    output: sam = temp("{sample}.sam")
+    output: sam = temp("{sample}.sam"),
             bam = temp("{sample}.bam"),
-            sorted = temp("{sample}_sorted.bam"),
+            sortedFull = temp("{sample}_sorted.bam"),
+            sortedShort = temp("{sample}_sorted")
     threads: ncores
     shell:
         """
@@ -105,5 +111,7 @@ rule align:
 
         samtools view -bS {output[sam]} > {output[bam]}
 
-        samtools sort -@ {ncores} {output[bam]} {output[sorted]}
+        samtools sort -@ {ncores} {output[bam]} {output[sortedShort]}
+
+        touch {output[sortedShort]}
         """
