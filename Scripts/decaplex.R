@@ -20,17 +20,25 @@ if(FALSE)
     args <- "wd=tmp" # do all repeatseq files in this directory
 }
 
-# parse arguments
-tmp <- strsplit(args, ' ')[[1]] %>%
-       strsplit(split = '=')
+# parse arguments (if any were given)
+if(length(args) > 0)
+{
+    tmp <- strsplit(args, ' ')[[1]] %>%
+           strsplit(split = '=')
 
 
-args <- lapply(tmp, `[`, 2)
-names(args) <- sapply(tmp, `[`, 1)
+    args <- lapply(tmp, `[`, 2)
+    names(args) <- sapply(tmp, `[`, 1)
+}else{
+    args <- list()
+}
 
 # default arguements
 if(is.null(args$i))
     args$i <- system(paste('ls', args$wd, '| grep repeatseq$'), intern = TRUE)
+
+if(length(args$i) == 0)
+    stop("Missing input files")
 
 if(is.null(args$o))
     args$o <- 'MSIresults.out'
