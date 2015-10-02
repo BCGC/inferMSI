@@ -1,1 +1,1 @@
-export(trainMSI, readMSI, inferMSI, logitreg)
+export(trainMSI, inferMSI, logitreg)
