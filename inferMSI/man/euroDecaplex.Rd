@@ -1,6 +1,6 @@
 \name{decaplex}
 
-\alias{decaplex}
+\alias{euroDecaplex}
 
 \docType{data}
 
@@ -36,11 +36,6 @@ List of 5
   .. ..- attr(*, "names")= chr [1:54] "24" "25" "26" "27" ...
   ..$ D18S487: Named num [1:33] 1.32e-55 2.49e-44 1.96e-34 6.41e-26 8.85e-19 ...
   .. ..- attr(*, "names")= chr [1:33] "14" "15" "16" "17" ...
- $ roc    : num [1:79, 1:3] 0 0 0 0 0 0 0 0 0 0 ...
-  ..- attr(*, "dimnames")=List of 2
-  .. ..$ : NULL
-  .. ..$ : chr [1:3] "False Positive" "True Positive" "Cutoff"
- $ auc    : num 0.143
 }
 
 \source{
@@ -54,8 +49,7 @@ List of 5
 }
 
 \examples{
-data(decaplex)
-## maybe str(decaplex) ; plot(decaplex) ...
+data(euroDecaplex)
 }
 
 \keyword{datasets}
