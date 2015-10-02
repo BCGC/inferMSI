@@ -12,43 +12,39 @@ inferMSI <- function(file, model, cut.off)
 
 
     ######### Read .repeatseq files #########
-    repeatseq <- lapply(file, read.repeatseq, markers)
+    repeatseq <- lapply(file, read.repeatseq, model$markers)
 
 
     ######### Score samples #########
-    scores <- matrix(NA, nrow = length(repeatseq), ncol = length(dstn),
-                     dimnames = list(names(tumor), names(dstn)))
+    scores <- matrix(NA, nrow = length(repeatseq), ncol = length(model$normal),
+                     dimnames = list(names(tumor), names(model$normal)))
 
     for(i in 1:length(repeatseq))
     {
-        for(j in names(dstn))
+        for(j in names(model$normal))
         {
             tmp <- repeatseq[[i]][[j]]$alleles
 
-            matches <- names(tmp) %in% names(dstn[[j]])
-            tmp[matches] <- abs(tmp[matches] - dstn[[j]][names(tmp)[matches]])
+            matches <- names(tmp) %in% names(model$normal[[j]])
+            tmp[matches] <- abs(tmp[matches] - model$normal[[j]][names(tmp)[matches]])
             scores[i,j] <- sum(tmp)
         }
     }
 
-    scores <- as.data.frame(scores)
-
     # fill in missing data
-    scores <- missForest(scores[,names(scores) %in% names(dstn)])$ximp
-    scores[,!names(scores) %in% names(dstn)] <- 0
+    scores <- missForest(as.data.frame(scores))$ximp %>%
+              as.matrix()
+
 
     ######### Infer MSI status #########
-    if(dim(tmp)[1] == 1)
-    {
-        predictions <- inv.logit(t(t(c(1, tmp))) %*% model$pred)
-    }else{
-        predictions <- inv.logit(cbind(1, tmp) %*% model$pred)
-    }
+    predictions <- cbind(1, scores) %*% model$pred %>%
+                   inv.logit()
 
 
     ######### Return results #########
-    retval <- list(msi = prediction > cut.off,
-                   score = prediction)
+    retval <- list(file = file,
+                   msi = predictions > cut.off,
+                   score = predictions)
 
     return(retval)
 }

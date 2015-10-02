@@ -7,36 +7,27 @@
 
 
 from glob import glob
+import multiprocessing
 
 # set these variables to the appropriate paths
 reference = "~/hg19/human_g1k_v37.fasta"
 goldStandardIndels = "~/hg19/Mills_and_1000G_gold_standard.indels.b37.vcf"
-regions = "../../Data/repeatSeq/b37.2014.sub_10.regions"
 
 # defaults
-ncores = 8
+ncores = multiprocessing.cpu_count()
 
 # run on all fastq file pairs in the current working directory
 # note that they must end with ".R1.fastq.gz" or ".R2.fastq.gz"
 fq1 = glob("*.R1.fastq.gz")
 fq2 = glob("*.R2.fastq.gz")
 
-rptseq = [f.replace(".R1.fastq.gz", "_realigned.bam.repeatseq") for f in fq1]
+baiFiles = [f.replace(".R1.fastq.gz", "_realigned.bam.bai") for f in fq1]
 
 
 
 ##### Rule All #####
 rule all:
-    input: rptseq
-
-
-##### run repeatseq #####
-rule repeatseq:
-    input: bam = "{sample}_realigned.bam",
-           bai = "{sample}_realigned.bam.bai"
-    output: "{sample}_realigned.bam.repeatseq",
-            temp("{sample}_realigned.bam.vcf")
-    shell: "repeatseq -repeatseq {input[bam]} {reference} {regions}"
+    input: baiFiles
 
 
 ##### Realign around indels #####
