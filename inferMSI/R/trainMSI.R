@@ -46,7 +46,7 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, verbose = FALSE)
     }
 
 
-    ######### Calculate CDFs #########
+    ######### Calculate Microsat Distributions #########
 
     # drop any markers that didn't sequence properly
     for(i in names(dstn)[which(sapply(dstn, length) == 0)])
@@ -99,57 +99,40 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, verbose = FALSE)
 
     scores <- scores[,c(names(nunique)[nunique > 4], 'msi')] # want 5 or more unique values
 
+    # impute missing scores
+    scores <- missForest(scores[,names(scores) %in% c(names(dstn), 'msi')])$ximp
+
 
     ######### Training #########
 
-    # pick training/testing groups
-    if(train.prop < 1)
-    {
-        training <- c(sample((1:dim(scores)[1])[ scores$msi], size = round(sum( scores$msi)*train.prop)),
-                      sample((1:dim(scores)[1])[!scores$msi], size = round(sum(!scores$msi)*train.prop)))
-        testing <- (1:dim(scores)[1])[-training]
-    }else{
-        training <- 1:dim(scores)[1]
-        testing <- numeric()
-    }
-
-    # impute missing scores
-    tmp <- missForest(scores[training,names(scores) %in% c(names(dstn), 'msi')])$ximp
-
     # get response variable column number
-    resp <- which(names(tmp) == 'msi')
-
-    tmp[,resp] <- as.numeric(tmp[,resp])
-    tmp <- as.matrix(tmp)
+    resp <- which(names(scores) == 'msi')
+    scores <- as.matrix(scores)
 
     # store cross validation results here
-    validate <- matrix(nrow = nValidations, ncol = ncol(tmp) + 1)
-    colnames(validate) <- c('(Intercept)', colnames(tmp)[-resp], 'score')
-    validationScore <- ncol(tmp) + 1
+    validate <- matrix(nrow = dim(scores)[1], ncol = ncol(scores) + 2)
+    colnames(validate) <- c('(Intercept)', colnames(scores)[-resp], 'score', 'msi')
+    validationScore <- (ncol(validate) - 1):ncol(validate) # these columns contain the validationScores
 
-    # run a bunch of models
-    for(i in 1:nValidations)
+    # train model with leave-one-out validation
+    for(i in 1:dim(scores)[1])
     {
-        # sample 80% / 20% for training / testing
-        nmsi <- sum(scores$msi[training])
-        test <- c(sample((1:dim(tmp)[1])[scores$msi[training]], nmsi*validate.prop),
-                  sample((1:dim(tmp)[1])[!scores$msi[training]], (dim(tmp)[1] - nmsi) * validate.prop))
-        train <- (1:dim(tmp)[1])[-test]
-
         # model
-        validate[i,-validationScore] <- logitreg(as.numeric(tmp[train, resp]), as.matrix(tmp[train, -resp]))$par
+        validate[i,-validationScore] <- logitreg(as.numeric(scores[-i, resp]), as.matrix(scores[-i, -resp]))$par
 
         # validate
-        predict <- inv.logit(cbind(1, tmp[test, -resp]) %*% validate[i,-validationScore])
-
-        # calculate likelihood score given correct solution (i.e. the larger this is the worse the prediction)
-        validate[i, validationScore] <- sum(ifelse(tmp[test,resp], log10(predict), log10(1 - predict)))
+        validate[i,'score'] <- c(1, scores[i, -resp]) %*% validate[i,-validationScore] %>%
+                               inv.logit()
+        validate[i,'msi'] <- scores[i,resp]
     }
+
+    Pcorrect <- ifelse(validate[,'msi'], validate[,'score'], 1 - validate[,'score'])
 
 
     # pick final model
     model <- list()
-    model$pred <- apply(validate[is.finite(validate[,'score']),-validationScore], 2, median)
+    model$pred <- validate[is.finite(validate[,'score']),-validationScore] %>% # only keep rows w/ finite scores
+                  apply(2, median) # use median to avoid overly influential rows
     model$markers <- markers
     model$normal <- dstn
     model$meanScore <- apply(scores[!msi,names(model$pred)[-1]], 2, mean, na.rm = TRUE)
@@ -157,40 +140,42 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, verbose = FALSE)
     # if verbose show full spectrum of models
     if(verbose)
         if(require(MASS))
-            parcoord(validate[,-validationScore], lty = ifelse(!is.finite(validate[,validationScore]), 3, 1),
-                     col = ifelse(!is.finite(validate[,validationScore]), 'red', 'black'))
+            parcoord(validate[,-validationScore], col = rgb(1 - Pcorrect, Pcorrect, 0))
 
 
     ######### Testing #########
-    if(length(testing) > 0)
-    {
-        tmp <- as.matrix(missForest(scores[testing,names(scores) %in% c(names(dstn), 'msi')])$ximp)
-    }
 
-    # predict (posibly using test data)
-    prediction <- inv.logit(cbind(1, tmp[,names(model$pred)[-1]]) %*% model$pred)
+    # predict using final model
+    prediction <- inv.logit(cbind(1, scores[,names(model$pred)[-1]]) %*% model$pred)
 
     # collect model metrics via ROC
-    roc <- matrix(nrow = length(unique(prediction)) + 2, ncol = 3,
-                  dimnames = list(NULL, c('False Positive', 'True Positive', 'Cutoff')))
+    roc <- matrix(nrow = 300, ncol = 3, dimnames = list(NULL, c('False Positive', 'True Positive', 'Cutoff')))
 
-    roc[,'Cutoff'] <- c(1, unique(prediction[order(-prediction)]), 0)
+    roc[,'Cutoff'] <- seq(from = 1, to = 0, length = 300)
 
     for(i in 1:dim(roc)[1])
     {
-        roc[i,'False Positive'] <- sum(prediction[tmp[,'msi'] == 0] > roc[i,'Cutoff']) / sum(tmp[,'msi'] == 0)
-        roc[i,'True Positive'] <- sum(prediction[tmp[,'msi'] == 1] > roc[i,'Cutoff']) / sum(tmp[,'msi'] == 1)
+        roc[i,'False Positive'] <- sum(validate[validate[,'msi'] == 0, 'score'] > roc[i,'Cutoff'])
+        roc[i,'True Positive'] <- sum(validate[validate[,'msi'] == 1, 'score'] > roc[i,'Cutoff'])
     }
 
+    roc[,'False Positive'] <- roc[,'False Positive'] / sum(validate[,'msi'] == 0)
+    roc[,'True Positive'] <- roc[,'True Positive'] / sum(validate[,'msi'] == 1)
+
+    # only keep those where there is a change
+    roc <- rbind(c(0, 0, 1),
+                 roc[c(FALSE, roc[-1,'False Positive'] != roc[-300,'False Positive'] |
+                              roc[-1,'True Positive'] != roc[-300,'True Positive']),],
+                 c(1, 1, 0))
+
     model$roc <- roc
-    ## model$auc <- sum((roc[-dim(roc)[1],'Cutoff'] -  roc[-1,'Cutoff']) * roc[-1,'True Positive'])
 
     if(verbose)
     {
         plot(roc[,1], roc[,2], type = 'l', xlab = 'False Positive', ylab = 'True Positive', main = 'ROC')
         abline(0:1, lty = 2)
 
-        plot(prediction, col = ifelse(tmp[,'msi'] == 1, 'red', 'black'), pch = 20, ylab = 'Prediction')
+        plot(prediction, col = ifelse(scores[,'msi'] == 1, 'red', 'black'), pch = 20, ylab = 'Prediction')
     }
 
     return(model)
