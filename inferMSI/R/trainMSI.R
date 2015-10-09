@@ -4,8 +4,7 @@
 # CCR Collaborative Bioinformatics Resrouce at Frederick National Laboratory
 # Leidos Biomedical Research, Inc
 
-trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000, train.prop = 0.5,
-                     validate.prop = 0.2, seed = 2308947, verbose = FALSE)
+trainMSI <- function(germline, somatic, msi, markers = NULL, verbose = FALSE)
 {
     ######### Checks #########
     # ... should add some checks here to be sure variables make sense ... assuming they do for now
@@ -58,8 +57,9 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
     {
         r <- range(as.numeric(names(dstn[[i]])))
 
-        tmp <- cdfMclust(densityMclust(rep(as.numeric(names(dstn[[i]])), ceiling(dstn[[i]]*10))),
-                         seq(r[1] - 0.5, r[2] + 0.5, by = 1))
+        tmp <- rep(as.numeric(names(dstn[[i]])), ceiling(dstn[[i]]*10)) %>%
+               densityMclust() %>%
+               cdfMclust(seq(r[1] - 0.5, r[2] + 0.5, by = 1))
 
         tmp$x <- with(tmp, x[-length(x)] + 0.5)
         tmp$y <- with(tmp, y[-1] - y[-length(y)])
@@ -92,10 +92,15 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
     # just in case...
     scores <- subset(scores, !is.na(msi))
 
+    # drop any that don't have enough unique values
+    nunique <- apply(scores[,names(dstn)], 2, unique) %>% # get unique values
+               lapply(na.omit) %>%                        # remove NA from unique values
+               sapply(length)                             # count number of uniue values
+
+    scores <- scores[,c(names(nunique)[nunique > 4], 'msi')] # want 5 or more unique values
+
 
     ######### Training #########
-
-    set.seed(seed)
 
     # pick training/testing groups
     if(train.prop < 1)
@@ -119,7 +124,7 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
 
     # store cross validation results here
     validate <- matrix(nrow = nValidations, ncol = ncol(tmp) + 1)
-    colnames(validate) <- c(colnames(tmp), 'score')
+    colnames(validate) <- c('(Intercept)', colnames(tmp)[-resp], 'score')
     validationScore <- ncol(tmp) + 1
 
     # run a bunch of models
@@ -147,6 +152,7 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
     model$pred <- apply(validate[is.finite(validate[,'score']),-validationScore], 2, median)
     model$markers <- markers
     model$normal <- dstn
+    model$meanScore <- apply(scores[!msi,names(model$pred)[-1]], 2, mean, na.rm = TRUE)
 
     # if verbose show full spectrum of models
     if(verbose)
@@ -162,7 +168,7 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
     }
 
     # predict (posibly using test data)
-    prediction <- inv.logit(cbind(1, tmp[,-resp]) %*% model$pred)
+    prediction <- inv.logit(cbind(1, tmp[,names(model$pred)[-1]]) %*% model$pred)
 
     # collect model metrics via ROC
     roc <- matrix(nrow = length(unique(prediction)) + 2, ncol = 3,
@@ -177,7 +183,7 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
     }
 
     model$roc <- roc
-    model$auc <- sum((roc[-dim(roc)[1],'Cutoff'] -  roc[-1,'Cutoff']) * roc[-1,'True Positive'])
+    ## model$auc <- sum((roc[-dim(roc)[1],'Cutoff'] -  roc[-1,'Cutoff']) * roc[-1,'True Positive'])
 
     if(verbose)
     {
@@ -188,4 +194,89 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, nValidations = 1000
     }
 
     return(model)
+}
+
+
+scoreMSI <- function(f, somatic, markers = NULL)
+{
+    ######### Checks #########
+    # ... should add some checks here to be sure variables make sense ... assuming they do for now
+
+
+    ######### Read .repeatseq files #########
+    rptsq <- lapply(f, read.repeatseq, markers)
+    names(rptsq) <- f
+
+
+    ######### Collect Mixture Distributions #########
+    dstn <- list()
+
+    for(i in 1:length(rptsq[[1]]))
+    {
+        # gather individual distributions
+        tmp <- sapply(rptsq[!somatic], `[`, i)
+
+        dstn[[names(rptsq[[1]])[i]]] <- numeric()
+
+        # do this by individual
+        for(j in 1:length(tmp))
+        {
+            alleles <- tmp[[j]]$alleles
+            alleles <- alleles[!is.na(alleles)]
+
+            if(any(names(alleles) == 'NA'))
+                stop()
+            if(length(alleles) == 0)
+                next
+
+            # weight by the log10 number of reads
+            weight <- log10(tmp[[j]]$nReads)
+
+            # calculate distribution
+            dstn[[i]][names(alleles)] <- ifelse(is.na(dstn[[i]][names(alleles)]), alleles*weight,
+                                                dstn[[i]][names(alleles)] + alleles*weight)
+        }
+    }
+
+
+    ######### Calculate CDFs #########
+
+    # drop any markers that didn't sequence properly
+    for(i in names(dstn)[which(sapply(dstn, length) == 0)])
+        dstn[[i]] <- NULL
+
+    # cumulative density function
+    for(i in 1:length(dstn))
+    {
+        r <- range(as.numeric(names(dstn[[i]])))
+
+        tmp <- cdfMclust(densityMclust(rep(as.numeric(names(dstn[[i]])), ceiling(dstn[[i]]*10))),
+                         seq(r[1] - 0.5, r[2] + 0.5, by = 1))
+
+        tmp$x <- with(tmp, x[-length(x)] + 0.5)
+        tmp$y <- with(tmp, y[-1] - y[-length(y)])
+
+        dstn[[i]] <- tmp$y
+        names(dstn[[i]]) <- tmp$x
+    }
+
+
+    ######### Calculate individual differences among somatic samples #########
+
+    scores <- matrix(NA, nrow = length(rptsq), ncol = length(dstn),
+                 dimnames = list(names(rptsq), names(dstn)))
+
+    for(i in 1:length(rptsq))
+    {
+        for(j in names(dstn))
+        {
+            tmp <- rptsq[[i]][[j]]$alleles
+
+            matches <- names(tmp) %in% names(dstn[[j]])
+            tmp[matches] <- abs(tmp[matches] - dstn[[j]][names(tmp)[matches]])
+            scores[i,j] <- sum(tmp)
+        }
+    }
+
+    scores <- as.data.frame(scores)
 }

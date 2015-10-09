@@ -17,7 +17,7 @@ inferMSI <- function(file, model, cut.off)
 
     ######### Score samples #########
     scores <- matrix(NA, nrow = length(repeatseq), ncol = length(model$normal),
-                     dimnames = list(names(tumor), names(model$normal)))
+                     dimnames = list(names(repeatseq), names(model$normal)))
 
     for(i in 1:length(repeatseq))
     {
@@ -31,20 +31,39 @@ inferMSI <- function(file, model, cut.off)
         }
     }
 
-    # fill in missing data
-    scores <- missForest(as.data.frame(scores))$ximp %>%
-              as.matrix()
+
+    ######### fill in missing data #########
+
+    # if there are only a few (or no) observed values, fill in NAs with average score among non-msi samples
+    nunique <- apply(scores, 2, unique) %>%
+               lapply(na.omit) %>%
+               sapply(length)
+
+    for(j in which(nunique < 5))
+    {
+        if(names(nunique)[j] %in% names(model$pred))
+            scores[is.na(scores[,j]),j] <- model$meanScore[names(nunique)[j]]
+    }
+
+    # among remaining NAs, impute
+    scores <- as.matrix(
+                        missForest(
+                                   as.data.frame(
+                                                 scores[,names(model$pred)[-1]]
+                                                )
+                                  )$ximp
+                        )
 
 
     ######### Infer MSI status #########
-    predictions <- cbind(1, scores) %*% model$pred %>%
+    predictions <- cbind(1, scores[,]) %*% model$pred %>%
                    inv.logit()
 
 
     ######### Return results #########
-    retval <- list(file = file,
-                   msi = predictions > cut.off,
-                   score = predictions)
+    retval <- data.frame(file = file,
+#                         msi = predictions > cut.off,
+                         score = predictions)
 
     return(retval)
 }

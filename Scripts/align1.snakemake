@@ -1,0 +1,119 @@
+# align1.snakemake
+# Randy Johnson
+# This Snakefile will generate repeatseq files given single read fastq.gz files
+# invoke with snakemake -s align.snakemake
+# CCR Collaborative Bioinformatics Resrouce at Frederick National Laboratory
+# Leidos Biomedical Research, Inc
+
+
+from glob import glob
+import multiprocessing
+
+# set these variables to the appropriate paths
+reference = "~/hg19/human_g1k_v37.fasta"
+goldStandardIndels = "~/hg19/Mills_and_1000G_gold_standard.indels.b37.vcf"
+
+# defaults
+ncores = multiprocessing.cpu_count()
+
+# run on all fastq files in the current working directory
+# note that they must end with ".fastq.gz"
+fq = glob("*.fastq.gz")
+
+baiFiles = [f.replace(".fastq.gz", "_realigned.bam.bai") for f in fq]
+
+
+
+##### Rule All #####
+rule all:
+    input: baiFiles
+
+
+##### Realign around indels #####
+# repeatseq looks for this file ending
+rule link2index:
+    input: "{sample}_realigned.bai"
+    output: "{sample}_realigned.bam.bai"
+    threads: 1
+    shell: "ln -s {input} {output}"
+
+rule realign:
+    input: bam = "{sample}_deduped.bam",
+           bai = "{sample}_deduped.bam.bai"
+    output: lst = temp("{sample}.list"),
+            bam = "{sample}_realigned.bam",
+            bai = "{sample}_realigned.bai"
+    threads: 1
+    shell:
+        """
+        java -jar ~/bin/GenomeAnalysisTK.jar \
+                  -T RealignerTargetCreator \
+                  -R {reference}  \
+                  -I {input[bam]} \
+                  -L 20 \
+                  -known {goldStandardIndels} \
+                  -o {output[lst]}
+
+        java -jar ~/bin/GenomeAnalysisTK.jar \
+                  -T IndelRealigner \
+                  -R {reference} \
+                  -I {input[bam]} \
+                  -targetIntervals {output[lst]} \
+                  -known {goldStandardIndels} \
+                  -o {output[bam]}
+        """
+
+
+##### Dedup and fix up bams #####
+
+rule dedupBams:
+    input: "{sample}_sorted.bam"
+    output: tmpBam = temp("{sample}_deduped0.bam"),
+            metrics = temp("{sample}_metrics.txt"),
+            index = temp("{sample}_deduped.bam.bai"),
+            bam = temp("{sample}_deduped.bam")
+    threads: 1
+    shell:
+        """
+        java -XX:ParallelGCThreads=1 \
+             -jar ~/bin/MarkDuplicates.jar \
+             INPUT={input} \
+             OUTPUT={output[tmpBam]} \
+             METRICS_FILE={output[metrics]}
+
+        java -jar ~/bin/AddOrReplaceReadGroups.jar \
+             INPUT={output[tmpBam]} \
+             OUTPUT={output[bam]} \
+             RGLB=lib1 \
+             RGPL=illumina \
+             RGPU=run \
+             RGSM={input}
+
+        samtools index {output[bam]}
+        """
+
+
+##### Align reads and generate bam file #####
+
+# There must be a better way to do this, but samtools takes a file name and
+# appends .bam ... if I pass sortedFull name, it give me <>.bam.bam, but I'm
+# unsure of how to pass sortedShort without Snakemake expeting it in the output
+# -- come back to this and figure out a better solution --
+
+rule align:
+    input: "{sample}.fastq.gz"
+    output: sam = temp("{sample}.sam"),
+            bam = temp("{sample}.bam"),
+            sortedFull = temp("{sample}_sorted.bam"),
+            sortedShort = temp("{sample}_sorted")
+    threads: ncores
+    shell:
+        """
+        bwa mem -t {ncores} {reference} {input} > {output[sam]}
+
+        samtools view -bS {output[sam]} > {output[bam]}
+
+        samtools sort -@ {ncores} {output[bam]} {output[sortedShort]}
+
+        touch {output[sortedShort]}
+        """

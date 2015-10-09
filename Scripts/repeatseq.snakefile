@@ -10,6 +10,8 @@ from glob import glob
 # set these variables to the appropriate paths
 reference = "~/hg19/human_g1k_v37.fasta"
 regions = "b37.2014.sub_10.regions"
+#reference = "~/hg19/hg19.fasta"
+#regions = "hg19.2014.sub_10.regions"
 
 # run on all bam files in the current working directory
 bams = glob("*.bam")

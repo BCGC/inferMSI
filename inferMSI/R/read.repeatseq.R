@@ -83,14 +83,24 @@ read.repeatseq <- function(f, markers = NULL)
 
     if(!is.null(markers))
     {
-        for(j in 1:length(retval))
+        retvalNames <- unlist(sapply(retval, `[`, 'siteInfo'))
+
+        if(length(which(retvalNames %in% names(markers))) == 0)
         {
-            if(retval[[j]]$siteInfo %in% names(markers))
+            if(length(which(gsub('^chr', '', retvalNames) %in% names(markers))) == 0)
             {
-                names(retval)[j] <- markers[retval[[j]]$siteInfo]
+                if(length(which(retvalNames %in% gsub('^chr', '', names(markers)))) == 0)
+                {
+                    warning('Marker names and repeatseq names do not match')
+                    names(retval) <- retvalNames
+                }else{
+                    names(retval) <- markers[paste('chr', retvalNames, sep = '')]
+                }
             }else{
-                names(retval)[j] <- retval[[j]]$siteInfo
+                names(retval) <- markers[gsub('^chr', '', retvalNames)]
             }
+        }else{
+            names(retval) <- markers[retvalNames]
         }
     }else{
         names(retval) <- unlist(sapply(retval, `[`, 'siteInfo'))
