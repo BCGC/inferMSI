@@ -1,5 +1,6 @@
 # decaplex.R
 # Infer MSI status for a tumor sample with decaplex model
+# run with R --no-save < decaplex.R --args ...
 # Randy Johnson
 # CCR Collaborative Bioinformatics Resource at Frederick National Laboratory
 # Leidos Biomedical Research, Inc

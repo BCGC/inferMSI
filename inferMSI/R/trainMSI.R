@@ -20,10 +20,15 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, verbose = FALSE)
 
     for(i in 1:length(normal[[1]]))
     {
+        # if we have extra markers, skip them
+        if(!names(normal[[1]])[i] %in% markers)
+            next
+
         # gather individual distributions
         tmp <- sapply(normal, `[`, i)
 
-        dstn[[names(normal[[1]])[i]]] <- numeric()
+        m <- names(normal[[1]])[i]
+        dstn[[m]] <- numeric()
 
         # do this by individual
         for(j in 1:length(tmp))
@@ -40,8 +45,8 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, verbose = FALSE)
             weight <- log10(tmp[[j]]$nReads)
 
             # calculate distribution
-            dstn[[i]][names(alleles)] <- ifelse(is.na(dstn[[i]][names(alleles)]), alleles*weight,
-                                                dstn[[i]][names(alleles)] + alleles*weight)
+            dstn[[m]][names(alleles)] <- ifelse(is.na(dstn[[m]][names(alleles)]), alleles*weight,
+                                                dstn[[m]][names(alleles)] + alleles*weight)
         }
     }
 
@@ -140,7 +145,8 @@ trainMSI <- function(germline, somatic, msi, markers = NULL, verbose = FALSE)
     # if verbose show full spectrum of models
     if(verbose)
         if(require(MASS))
-            parcoord(validate[,-validationScore], col = rgb(1 - Pcorrect, Pcorrect, 0))
+            parcoord(validate[,-validationScore], col = rgb(1 - Pcorrect, Pcorrect, 0),
+                     lty = ifelse(validate[,'msi'], 1, 2))
 
 
     ######### Testing #########
