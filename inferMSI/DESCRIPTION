@@ -4,7 +4,7 @@ Date: 2015-09-11
 Title: inferMSI
 Author: Randall Johnson <johnsonra@mail.nih.gov>
 Maintainer: Randall Johnson <johnsonra@mail.nih.gov>
-Depends: diptest, mclust, missForest, boot
+Depends: diptest, mclust, missForest, boot, magrittr
 Suggests: MASS
 Description: A package providing tools for MSI inference in cancer samples
 License: Revised BSD
