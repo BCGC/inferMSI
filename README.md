@@ -3,9 +3,9 @@
 This repository contains scripts and an R package for infering MSI status given sequence data from cancer samples. There are currently two main scripts for running these analyses: paired.R and unpaired.R.
 
 ## Unpaired sample inference
-The unpaired.R script analyzes [repeatseq](https://github.com/adaptivegenome/repeatseq) output, making MSI inferrences by comparing observed microsatellite distributions to a training data set. We have tested and obtained good results using this technique with Illumina sequence reads, but IonTorrent data we have tested suffered from low sensitivity.
+The unpaired.R script analyzes [repeatseq](https://github.com/adaptivegenome/repeatseq) output, making MSI inferrences by comparing observed microsatellite distributions to a training data set. We have tested and obtained good results using this technique with Illumina sequence reads, and IonTorrent data we have tested suffered from low sensitivity.
 
-An RData object containing a prediction model from our training data (add reference here) is included in the accompanying R package, but it is recommended that users generate their own prediction model with their own data. More documentation for the inferMSI R package, including usage and methods, can be found [here](https://github.com/BCGC/inferMSI/blob/master/inferMSI/README.md).
+An RData object containing a prediction model from our training data (add reference here) is included in the accompanying R package, but it is recommended that users generate their own prediction model with their own data. When using your own prediction model, the unpaired.R script will need to be modified. More documentation for the inferMSI R package, including usage and methods, can be found [here](https://github.com/BCGC/inferMSI/blob/master/inferMSI/README.md).
 
 ### Calling unpaired.R
 Invoking unpaired.R using all defaults is done from the command line as follows:
