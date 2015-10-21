@@ -22,7 +22,7 @@ R --no-save < unpaired.R --args i=sample1.bam.repeatseq
 ```
 
 #### Command line arguments
-- i: Path to a specific file to infer MSI status (defaults to all files ending with "repeatseq" in the current working directory or the directory indicated by wd).
+- i: Path to a specific file to infer MSI status (defaults to all files ending with "repeatseq" in the current working directory or the directory indicated by wd). See repeatseq.snakefile for some example code to generate these files.
 - o: File path for the output (default is "MSIresults.out").
 - wd: Path to an alternate working directory where the repeatseq data can be found (default is the current working directory).
 - cutoff: MSI score cutoff/threshold for inferring MSI samples (default is 0.2). If you develop your own model using your own samples (recommended), this argument may need some tuning.
@@ -52,9 +52,23 @@ A tab delimeted file with the following columns (column headers are required to 
 - tumor: bam file from paired tumor sample
 - out: temporary MSIsensor output file for this sample
 
+paired.R also assumes a reference file with the target microsatellites, hg19_12.list, is in the working directory. A symbolic link to the actual file can be created, or if using a different marker panel an appropriate file will need to be generated. See the [MSIsensor](https://github.com/ding-lab/msisensor) documentation for more details. Files for HG19 and B37 builds are included in this repository in the Data directory.
+
 ### Output
 A tab delimited file with the following columns:
 - Sample ID (taken from the input file name)
 - Number of sites tested
 - Nubmer of sites flagged as somatic
 - Percent of sites flagged as somatic
+
+## Additional scripts and data
+There are a few additional scripts and data are included in this repository that the user may find useful.
+
+### align1.snakefile
+This snakefile contains a pipline to align single reads and generate bam files for all fastq files in the directory. Reference files will need to be provided and some additional editing of this script will likely be necessary for each system.
+
+### align2.snakefile
+This snakefile contains a pipline to align paired end reads and generate bam files for all fastq files in the directory. Reference files will need to be provided and some additional editing of this script will likely be necessary for each system.
+
+### repeatseq.snakefile
+This snakefile contains a pipeline to generate repeatseq files for each bam file in the directory. These files will be needed for unpaired.R. b37_10.regions and hg19_10.regions are provided in the Data directory of this repository, but may need to be generated for alternate marker panels. Additional reference files will need to be provided and some additional editing of this script will likely be necessary for each system.
